@@ -1,15 +1,24 @@
-from flask import Flask, render_template_string, request, redirect, url_for, session
+from flask import Flask, render_template_string, request, redirect, url_for, session, flash
 import sqlite3
+import requests
 
 app = Flask(__name__)
-app.secret_key = 'supersecretkey'
-DATABASE = 'finance.db'
-USD_TO_RUB = 80
+app.secret_key = '12345'
+dbb = 'finance.db'
+
+def get_current_usd_to_rub():
+    url = 'https://open.er-api.com/v6/latest/USD'
+    response = requests.get(url)
+    data = response.json()
+    return data['rates']['RUB']
+
+USD_TO_RUB = get_current_usd_to_rub()
+
 
 CATEGORIES = ['Зарплата', 'Еда', 'Развлечение', 'Транспорт', 'Шопинг', 'Другое']
 
 def get_db():
-    db = sqlite3.connect(DATABASE)
+    db = sqlite3.connect(dbb)
     db.row_factory = sqlite3.Row
     return db
 
@@ -58,7 +67,7 @@ def calculate_ndfl(income_rub):
         )
     return tax
 
-INDEX_HTML = ''' 
+INDEX_HTML = '''
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -66,80 +75,184 @@ INDEX_HTML = '''
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Финансы</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
     <style>
         body {
-            font-family: Arial, sans-serif;
-            margin: 20px auto;
-            max-width: 600px;
-            padding: 0 15px;
-            background-color: #f9f9f9;
+            font-family: 'Roboto', sans-serif;
+            background-image: url('https://avatars.mds.yandex.net/i?id=a71280601e38e1d2cf1ed88f46a9fee2_l-5312571-images-thumbs&ref=rim&n=13&w=1800&h=972');
+            background-size: cover;
+            background-attachment: fixed;
+            margin: 0;
+            padding: 0;
+            color: #333;
         }
+
+        main {
+            max-width: 800px;
+            margin: 40px auto;
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+        }
+
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            margin-bottom: 20px;
         }
+
         header h1 {
             margin: 0;
+            font-size: 2rem;
+            display: flex;
+            align-items: center;
         }
-        .user-actions form, .user-actions button {
-            margin-left: 10px;
-            display: inline-block;
+
+        header h1::before {
+            content: url('https://img.icons8.com/ios-filled/30/000000/money.png');
+            margin-right: 10px;
         }
-        .finances {
-            margin-top: 20px;
+
+        .user-actions {
+            display: flex;
+            align-items: center;
         }
+
+        .user-actions span {
+            margin-right: 10px;
+        }
+
+        button {
+            padding: 6px 12px;
+            background-color: #007bff;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
         .finances table {
             width: 100%;
             border-collapse: collapse;
+            margin-bottom: 20px;
         }
+
         .finances th, .finances td {
+            border: 1px solid #ccc;
+            padding: 10px;
+        }
+
+        .finances th {
+            background-color: #f0f0f0;
+        }
+
+        .add-form, .login-register {
+            background-color: #f9f9f9;
+            border-left: 5px solid #007bff;
+            padding: 20px;
+            margin-top: 20px;
+            border-radius: 8px;
+        }
+
+        .add-form input[type="text"],
+        .add-form input[type="number"],
+        .add-form select,
+        .login-register input[type="text"],
+        .login-register input[type="password"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        input[type="submit"] {
+            background-color: #28a745;
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        input[type="submit"]:hover {
+            background-color: #218838;
+        }
+
+        .currency-switch {
+            margin: 10px 0 20px;
+        }
+
+        .currency-switch select {
+            padding: 6px;
+            border-radius: 4px;
+        }
+
+        h2 {
+            margin-top: 0;
+        }
+
+        .flash-message {
+            background-color: #f8d7da;
+            color: #842029;
+            border: 1px solid #f5c2c7;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 15px;
+        }
+
+        .category-summary {
+            margin-bottom: 20px;
+        }
+
+        .category-summary h3 {
+            margin-bottom: 10px;
+        }
+
+        .category-summary table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        .category-summary th, .category-summary td {
             border: 1px solid #ccc;
             padding: 8px;
             text-align: left;
         }
-        .finances th {
-            background-color: #eee;
-        }
-        .add-form, .login-register {
-            margin-top: 20px;
-            padding: 10px;
-            background-color: #e8e8e8;
-            border-radius: 5px;
-        }
-        .add-form input[type="text"], .add-form input[type="number"], .add-form select,
-        .login-register input[type="text"], .login-register input[type="password"] {
-            padding: 5px;
-            margin-right: 10px;
-            margin-bottom: 10px;
-            width: calc(100% - 22px);
-            max-width: 200px;
-        }
-        .add-form label {
-            display: block;
-            margin-bottom: 5px;
-        }
-        .add-form input[type="submit"], .login-register input[type="submit"] {
-            padding: 8px 12px;
-            cursor: pointer;
-        }
-        .currency-switch {
-            margin-top: 10px;
+
+        .category-summary th {
+            background-color: #e9ecef;
         }
     </style>
 </head>
 <body>
+<main>
     <header>
         <h1>Финансы</h1>
         {% if user %}
         <div class="user-actions">
             <span>Привет, {{ user }}!</span>
-            <form action="{{ url_for('logout') }}" method="get" style="display:inline;">
+            <form action="{{ url_for('logout') }}" method="get">
                 <button type="submit">Выйти</button>
             </form>
         </div>
         {% endif %}
     </header>
+
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        {% for msg in messages %}
+          <div class="flash-message">{{ msg }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
 
     {% if not user %}
     <div class="login-register">
@@ -196,9 +309,31 @@ INDEX_HTML = '''
             </tbody>
         </table>
 
-        <p>Итого доходы: {{ "%.2f"|format(income_total) }} {{ currency }}</p>
-        <p>Итого расходы: {{ "%.2f"|format(expense_total) }} {{ currency }}</p>
-        <p>НДФЛ: {{ "%.2f"|format(tax) }} {{ currency }}</p>
+        <p><strong>Итого доходы:</strong> {{ "%.2f"|format(income_total) }} {{ currency }}</p>
+        <p><strong>Итого расходы:</strong> {{ "%.2f"|format(expense_total) }} {{ currency }}</p>
+        <p><strong>НДФЛ:</strong> {{ "%.2f"|format(tax) }} {{ currency }}</p>
+    </div>
+
+    <div class="category-summary">
+        <h3>Доходы по категориям (в {{ currency }})</h3>
+        <table>
+            <thead><tr><th>Категория</th><th>Сумма</th></tr></thead>
+            <tbody>
+            {% for cat, amount in income_by_cat.items() %}
+                <tr><td>{{ cat }}</td><td>{{ "%.2f"|format(amount) }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+
+        <h3>Расходы по категориям (в {{ currency }})</h3>
+        <table>
+            <thead><tr><th>Категория</th><th>Сумма</th></tr></thead>
+            <tbody>
+            {% for cat, amount in expense_by_cat.items() %}
+                <tr><td>{{ cat }}</td><td>{{ "%.2f"|format(amount) }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
     </div>
 
     <div class="add-form">
@@ -209,36 +344,40 @@ INDEX_HTML = '''
                     <option value="income">Доход</option>
                     <option value="expense">Расход</option>
                 </select>
-            </label><br />
+            </label>
             <label>Описание:
                 <input type="text" name="description" required />
-            </label><br />
+            </label>
             <label>Категория:
                 <select name="category" required>
                     {% for cat in categories %}
                     <option value="{{ cat }}">{{ cat }}</option>
                     {% endfor %}
                 </select>
-            </label><br />
+            </label>
             <label>Сумма:
                 <input type="number" step="0.01" min="0" name="amount" required />
-            </label><br />
+            </label>
             <label>Валюта:
                 <select name="currency" required>
                     <option value="RUB">RUB</option>
                     <option value="USD">USD</option>
                 </select>
-            </label><br />
+            </label>
             <input type="submit" value="Добавить" />
         </form>
     </div>
     {% endif %}
+</main>
 </body>
 </html>
 '''
 
 def to_display(rub_amount, currency):
     return rub_amount / USD_TO_RUB if currency == 'USD' else rub_amount
+
+def to_rub(amount, currency):
+    return amount * USD_TO_RUB if currency == 'USD' else amount
 
 def get_user():
     user_id = session.get('user_id')
@@ -262,83 +401,82 @@ def index():
     db = get_db()
     user_id = session['user_id']
     rows = db.execute("SELECT * FROM finances WHERE user_id = ? ORDER BY id DESC", (user_id,)).fetchall()
-    db.close()
+
+    income_cat_raw = get_total_income_by_category(user_id)
+    expense_cat_raw = get_total_expense_by_category(user_id)
+    income_by_cat = {cat: (amt / USD_TO_RUB if currency == 'USD' else amt) for cat, amt in income_cat_raw.items()}
+    expense_by_cat = {cat: (amt / USD_TO_RUB if currency == 'USD' else amt) for cat, amt in expense_cat_raw.items()}
 
     finances = []
-    income_rub = expense_rub = 0
+    income_total = 0
+    expense_total = 0
     for row in rows:
-        amt = row['amount_rub']
-        if row['type'] == 'income': income_rub += amt
-        else: expense_rub += amt
+        amount_rub = row['amount_rub']
+        amount_display = to_display(amount_rub, currency)
         finances.append({
             'id': row['id'],
             'type': row['type'],
             'description': row['description'],
             'category': row['category'],
-            'display_amount': to_display(amt, currency)
+            'display_amount': amount_display,
         })
+        if row['type'] == 'income':
+            income_total += amount_rub
+        else:
+            expense_total += amount_rub
 
-    income_total = to_display(income_rub, currency)
-    expense_total = to_display(expense_rub, currency)
-    ndfl_rub = calculate_ndfl(income_rub)
-    tax = to_display(ndfl_rub, currency)
+    tax = calculate_ndfl(income_total)
+
+    income_total_display = to_display(income_total, currency)
+    expense_total_display = to_display(expense_total, currency)
+    tax_display = to_display(tax, currency)
+
+    db.close()
 
     return render_template_string(INDEX_HTML,
-                                  finances=finances,
-                                  currency=currency,
-                                  income_total=income_total,
-                                  expense_total=expense_total,
-                                  tax=tax,
                                   user=user,
-                                  categories=CATEGORIES)
+                                  finances=finances,
+                                  income_total=income_total_display,
+                                  expense_total=expense_total_display,
+                                  tax=tax_display,
+                                  categories=CATEGORIES,
+                                  currency=currency,
+                                  income_by_cat=income_by_cat,
+                                  expense_by_cat=expense_by_cat
+                                  )
 
 @app.route('/add', methods=['POST'])
 def add():
-    user = get_user()
-    if not user:
+    if 'user_id' not in session:
+        flash("Пожалуйста, войдите в систему.")
         return redirect(url_for('index'))
 
+    user_id = session['user_id']
     type_ = request.form['type']
-    desc = request.form['description']
-    cat = request.form['category']
-    if cat not in CATEGORIES:
-        return redirect(url_for('index'))
+    description = request.form['description']
+    category = request.form['category']
+    amount = float(request.form['amount'])
+    currency = request.form['currency']
 
-    try:
-        amount = float(request.form['amount'])
-        if amount < 0:
-            raise ValueError
-    except:
-        return redirect(url_for('index'))
-
-    curr = request.form['currency'].upper()
-    if curr not in ('RUB', 'USD'):
-        curr = 'RUB'
-
-    amount_rub = amount * USD_TO_RUB if curr == 'USD' else amount
+    amount_rub = to_rub(amount, currency)
 
     db = get_db()
-    user_id = session['user_id']
-    db.execute('''
-        INSERT INTO finances (user_id, description, amount_rub, original_amount, original_currency, category, type)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (user_id, desc, amount_rub, amount, curr, cat, type_))
+    db.execute('INSERT INTO finances (user_id, description, amount_rub, original_amount, original_currency, category, type) VALUES (?, ?, ?, ?, ?, ?, ?)',
+               (user_id, description, amount_rub, amount, currency, category, type_))
     db.commit()
     db.close()
     return redirect(url_for('index'))
 
 @app.route('/delete/<int:id>', methods=['POST'])
 def delete(id):
-    user = get_user()
-    if not user:
+    if 'user_id' not in session:
+        flash("Пожалуйста, войдите в систему.")
         return redirect(url_for('index'))
 
     db = get_db()
     user_id = session['user_id']
-    row = db.execute('SELECT * FROM finances WHERE id = ? AND user_id = ?', (id, user_id)).fetchone()
-    if row:
-        db.execute('DELETE FROM finances WHERE id = ?', (id,))
-        db.commit()
+    db.execute('DELETE FROM finances WHERE id = ? AND user_id = ?', (id, user_id))
+    db.commit()
     db.close()
     return redirect(url_for('index'))
 
@@ -348,15 +486,26 @@ def login():
     password = request.form['password']
 
     db = get_db()
-    user = db.execute('SELECT * FROM users WHERE username = ? AND password = ?', (username, password)).fetchone()
+    user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+
+    if not user:
+        db.close()
+        flash('Пользователь не существует.')
+        return redirect(url_for('index'))
+
+    if user['password'] != password:
+        db.close()
+        flash('Неверный пароль.')
+        return redirect(url_for('index'))
+
+    session['user_id'] = user['id']
     db.close()
-    if user:
-        session['user_id'] = user['id']
     return redirect(url_for('index'))
 
 @app.route('/logout')
 def logout():
-    session.clear()
+    session.pop('user_id', None)
+    flash('Вы вышли из системы.')
     return redirect(url_for('index'))
 
 @app.route('/register', methods=['POST'])
@@ -365,15 +514,38 @@ def register():
     password = request.form['password']
 
     db = get_db()
-    existing = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
-    if existing:
+    exists = db.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
+    if exists:
         db.close()
+        flash('Пользователь с таким именем уже существует.')
         return redirect(url_for('index'))
 
     db.execute('INSERT INTO users (username, password) VALUES (?, ?)', (username, password))
     db.commit()
     db.close()
+
+    flash('Регистрация прошла успешно. Войдите в систему.')
     return redirect(url_for('index'))
+
+def get_total_income_by_category(user_id):
+    db = get_db()
+    result = db.execute(
+        "SELECT category, SUM(amount_rub) AS total_income "
+        "FROM finances WHERE user_id = ? AND type = 'income' GROUP BY category",
+        (user_id,)
+    ).fetchall()
+    db.close()
+    return {row['category']: row['total_income'] for row in result}
+
+def get_total_expense_by_category(user_id):
+    db = get_db()
+    result = db.execute(
+        "SELECT category, SUM(amount_rub) AS total_expense "
+        "FROM finances WHERE user_id = ? AND type = 'expense' GROUP BY category",
+        (user_id,)
+    ).fetchall()
+    db.close()
+    return {row['category']: row['total_expense'] for row in result}
 
 if __name__ == '__main__':
     init_db()
