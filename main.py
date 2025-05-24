@@ -1,10 +1,13 @@
 from flask import Flask, render_template_string, request, redirect, url_for, session, flash
-import sqlite3
+from flask_sqlalchemy import SQLAlchemy
 import requests
 
 app = Flask(__name__)
 app.secret_key = '12345'
-dbb = 'finance.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///finance.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
 
 def get_current_usd_to_rub():
     url = 'https://open.er-api.com/v6/latest/USD'
@@ -14,38 +17,25 @@ def get_current_usd_to_rub():
 
 USD_TO_RUB = get_current_usd_to_rub()
 
-
 CATEGORIES = ['Зарплата', 'Еда', 'Развлечение', 'Транспорт', 'Шопинг', 'Другое']
 
-def get_db():
-    db = sqlite3.connect(dbb)
-    db.row_factory = sqlite3.Row
-    return db
+class User(db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    username = db.Column(db.String, unique=True, nullable=False)
+    password = db.Column(db.String, nullable=False)
+    finances = db.relationship('Finance', backref='user', lazy=True)
 
-def init_db():
-    db = get_db()
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL
-        )
-    ''')
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS finances (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            description TEXT NOT NULL,
-            amount_rub REAL NOT NULL,
-            original_amount REAL NOT NULL,
-            original_currency TEXT NOT NULL CHECK(original_currency IN ('RUB', 'USD')),
-            category TEXT NOT NULL,
-            type TEXT NOT NULL CHECK(type IN ('income', 'expense')),
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        )
-    ''')
-    db.commit()
-    db.close()
+class Finance(db.Model):
+    __tablename__ = 'finances'
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    description = db.Column(db.String, nullable=False)
+    amount_rub = db.Column(db.Float, nullable=False)
+    original_amount = db.Column(db.Float, nullable=False)
+    original_currency = db.Column(db.String, nullable=False)
+    category = db.Column(db.String, nullable=False)
+    type = db.Column(db.String, nullable=False)
 
 def calculate_ndfl(income_rub):
     tax = 0
@@ -67,7 +57,7 @@ def calculate_ndfl(income_rub):
         )
     return tax
 
-INDEX_HTML = '''
+httml = '''
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -356,7 +346,7 @@ INDEX_HTML = '''
                 </select>
             </label>
             <label>Сумма:
-                <input type="number" step="0.01" min="0" name="amount" required />
+                <input type="number" name="amount" step="0.01" min="0.01" required />
             </label>
             <label>Валюта:
                 <select name="currency" required>
@@ -374,33 +364,46 @@ INDEX_HTML = '''
 '''
 
 def to_display(rub_amount, currency):
-    return rub_amount / USD_TO_RUB if currency == 'USD' else rub_amount
+    if currency == 'USD':
+        return rub_amount / USD_TO_RUB
+    return rub_amount
 
 def to_rub(amount, currency):
-    return amount * USD_TO_RUB if currency == 'USD' else amount
+    if currency == 'USD':
+        return amount * USD_TO_RUB
+    return amount
 
 def get_user():
     user_id = session.get('user_id')
-    if user_id is None:
+    if not user_id:
         return None
-    db = get_db()
-    user = db.execute('SELECT username FROM users WHERE id = ?', (user_id,)).fetchone()
-    db.close()
-    return user['username'] if user else None
+    user = User.query.get(user_id)
+    if user:
+        return user.username
+    return None
+
+from sqlalchemy import func
+
+def get_total_income_by_category(user_id):
+    results = db.session.query(Finance.category, func.sum(Finance.amount_rub)).filter_by(user_id=user_id, type='income').group_by(Finance.category).all()
+    return {category: total for category, total in results}
+
+def get_total_expense_by_category(user_id):
+    results = db.session.query(Finance.category, func.sum(Finance.amount_rub)).filter_by(user_id=user_id, type='expense').group_by(Finance.category).all()
+    return {category: total for category, total in results}
 
 @app.route('/')
 def index():
     user = get_user()
     if not user:
-        return render_template_string(INDEX_HTML, user=None)
+        return render_template_string(httml, user=None)
 
     currency = request.args.get('currency', 'RUB').upper()
     if currency not in ('RUB', 'USD'):
         currency = 'RUB'
 
-    db = get_db()
     user_id = session['user_id']
-    rows = db.execute("SELECT * FROM finances WHERE user_id = ? ORDER BY id DESC", (user_id,)).fetchall()
+    finances_db = Finance.query.filter_by(user_id=user_id).order_by(Finance.id.desc()).all()
 
     income_cat_raw = get_total_income_by_category(user_id)
     expense_cat_raw = get_total_expense_by_category(user_id)
@@ -410,17 +413,17 @@ def index():
     finances = []
     income_total = 0
     expense_total = 0
-    for row in rows:
-        amount_rub = row['amount_rub']
+    for item in finances_db:
+        amount_rub = item.amount_rub
         amount_display = to_display(amount_rub, currency)
         finances.append({
-            'id': row['id'],
-            'type': row['type'],
-            'description': row['description'],
-            'category': row['category'],
+            'id': item.id,
+            'type': item.type,
+            'description': item.description,
+            'category': item.category,
             'display_amount': amount_display,
         })
-        if row['type'] == 'income':
+        if item.type == 'income':
             income_total += amount_rub
         else:
             expense_total += amount_rub
@@ -431,9 +434,7 @@ def index():
     expense_total_display = to_display(expense_total, currency)
     tax_display = to_display(tax, currency)
 
-    db.close()
-
-    return render_template_string(INDEX_HTML,
+    return render_template_string(httml,
                                   user=user,
                                   finances=finances,
                                   income_total=income_total_display,
@@ -442,8 +443,7 @@ def index():
                                   categories=CATEGORIES,
                                   currency=currency,
                                   income_by_cat=income_by_cat,
-                                  expense_by_cat=expense_by_cat
-                                  )
+                                  expense_by_cat=expense_by_cat)
 
 @app.route('/add', methods=['POST'])
 def add():
@@ -460,11 +460,17 @@ def add():
 
     amount_rub = to_rub(amount, currency)
 
-    db = get_db()
-    db.execute('INSERT INTO finances (user_id, description, amount_rub, original_amount, original_currency, category, type) VALUES (?, ?, ?, ?, ?, ?, ?)',
-               (user_id, description, amount_rub, amount, currency, category, type_))
-    db.commit()
-    db.close()
+    new_finance = Finance(
+        user_id=user_id,
+        description=description,
+        amount_rub=amount_rub,
+        original_amount=amount,
+        original_currency=currency,
+        category=category,
+        type=type_
+    )
+    db.session.add(new_finance)
+    db.session.commit()
     return redirect(url_for('index'))
 
 @app.route('/delete/<int:id>', methods=['POST'])
@@ -473,11 +479,11 @@ def delete(id):
         flash("Пожалуйста, войдите в систему.")
         return redirect(url_for('index'))
 
-    db = get_db()
     user_id = session['user_id']
-    db.execute('DELETE FROM finances WHERE id = ? AND user_id = ?', (id, user_id))
-    db.commit()
-    db.close()
+    finance = Finance.query.filter_by(id=id, user_id=user_id).first()
+    if finance:
+        db.session.delete(finance)
+        db.session.commit()
     return redirect(url_for('index'))
 
 @app.route('/login', methods=['POST'])
@@ -485,21 +491,17 @@ def login():
     username = request.form['username']
     password = request.form['password']
 
-    db = get_db()
-    user = db.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+    user = User.query.filter_by(username=username).first()
 
     if not user:
-        db.close()
         flash('Пользователь не существует.')
         return redirect(url_for('index'))
 
-    if user['password'] != password:
-        db.close()
+    if user.password != password:
         flash('Неверный пароль.')
         return redirect(url_for('index'))
 
-    session['user_id'] = user['id']
-    db.close()
+    session['user_id'] = user.id
     return redirect(url_for('index'))
 
 @app.route('/logout')
@@ -513,40 +515,19 @@ def register():
     username = request.form['username']
     password = request.form['password']
 
-    db = get_db()
-    exists = db.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
+    exists = User.query.filter_by(username=username).first()
     if exists:
-        db.close()
         flash('Пользователь с таким именем уже существует.')
         return redirect(url_for('index'))
 
-    db.execute('INSERT INTO users (username, password) VALUES (?, ?)', (username, password))
-    db.commit()
-    db.close()
+    new_user = User(username=username, password=password)
+    db.session.add(new_user)
+    db.session.commit()
 
     flash('Регистрация прошла успешно. Войдите в систему.')
     return redirect(url_for('index'))
 
-def get_total_income_by_category(user_id):
-    db = get_db()
-    result = db.execute(
-        "SELECT category, SUM(amount_rub) AS total_income "
-        "FROM finances WHERE user_id = ? AND type = 'income' GROUP BY category",
-        (user_id,)
-    ).fetchall()
-    db.close()
-    return {row['category']: row['total_income'] for row in result}
-
-def get_total_expense_by_category(user_id):
-    db = get_db()
-    result = db.execute(
-        "SELECT category, SUM(amount_rub) AS total_expense "
-        "FROM finances WHERE user_id = ? AND type = 'expense' GROUP BY category",
-        (user_id,)
-    ).fetchall()
-    db.close()
-    return {row['category']: row['total_expense'] for row in result}
-
 if __name__ == '__main__':
-    init_db()
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)
